@@ -42,22 +42,24 @@ export const PLATFORM_DEFS: Record<Platform, PlatformDef> = {
     home: "https://www.tiktok.com/",
     detectLoggedIn: async (page) => {
       if (await has(page, '[data-e2e="top-login-button"]')) return false;
-      if (await has(page, '[data-e2e="profile-icon"], [data-e2e="nav-profile"]')) return true;
+      // The signed-in rail: profile, upload, inbox, messages. Any one of them is enough.
+      if (await has(page, '[data-e2e="profile-icon"], [data-e2e="nav-profile"], [data-e2e="nav-upload"], [data-e2e="inbox-icon"], [data-e2e="nav-messages"]')) return true;
       return null;
     },
   },
   facebook: {
     home: "https://www.facebook.com/",
     detectLoggedIn: async (page) => {
-      if (await has(page, 'form[action*="login"] input[name="email"], input[data-testid="royal_email"]')) return false;
-      if (await has(page, '[aria-label="Your profile"], [aria-label="Account"]')) return true;
+      // A signed-in Facebook never renders a password field or a registration link.
+      if (await has(page, 'input[name="pass"], input[type="password"], [data-testid="royal_login_form"], a[href*="/reg/"]')) return false;
+      if (await has(page, '[aria-label="Your profile"], [aria-label="Account"], [aria-label="Your profile, "], a[href*="/marketplace/"], [role="navigation"] a[href*="/friends/"]')) return true;
       return null;
     },
   },
   youtube: {
     home: "https://www.youtube.com/",
     detectLoggedIn: async (page) => {
-      if (await has(page, "#avatar-btn")) return true;
+      if (await has(page, "#avatar-btn, ytd-topbar-menu-button-renderer #avatar-btn")) return true;
       if (await has(page, 'a[aria-label="Sign in"], ytd-button-renderer a[href*="accounts.google.com"]')) return false;
       return null;
     },
