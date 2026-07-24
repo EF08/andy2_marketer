@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+profiles/
+backend.local.json
+.env
+.DS_Store
