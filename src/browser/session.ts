@@ -43,6 +43,14 @@ const ARGS_TO_STRIP = [
 async function applyContextSetup(context: BrowserContext): Promise<void> {
   await applyStealthPatches(context);
   await context.setExtraHTTPHeaders({ "accept-language": "en-US,en;q=0.9" });
+  // We run through tsx, whose esbuild transform keeps function names by wrapping them in a
+  // `__name(...)` helper. page.evaluate ships the transformed source into the browser, where
+  // that helper doesn't exist — so any extractor with a named inner function dies on
+  // "__name is not defined". A one-line identity shim in the page makes it a non-issue.
+  // Passed as raw source, not a function: a transpiled shim could itself be __name-wrapped.
+  await context.addInitScript({
+    content: "if (typeof globalThis.__name !== 'function') { globalThis.__name = function (f) { return f; }; }",
+  });
 }
 
 /** Playwright persistent context fallback (shows the automation banner; cdp preferred). */

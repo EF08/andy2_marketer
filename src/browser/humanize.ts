@@ -33,9 +33,26 @@ export async function humanizePage(page: Page, behavior: Behavior): Promise<void
   await randomWait(Math.floor(behavior.waitMinMs * 0.3), Math.floor(behavior.waitMinMs * 0.6));
 }
 
-/** Types text with human-variable per-keystroke delays (for posting/replying later). */
-export async function humanType(page: Page, text: string): Promise<void> {
+/**
+ * Types text with human-variable per-keystroke delays.
+ *
+ * `newline` matters: in X's tweet composer Enter inserts a line break, but in the DM
+ * composer Enter SENDS the message — so DM flows must pass "shift+enter" or a multi-line
+ * draft would fire off as several half-messages.
+ */
+export async function humanType(
+  page: Page,
+  text: string,
+  opts: { newline?: "enter" | "shift+enter" } = {},
+): Promise<void> {
+  const newlineKey = opts.newline === "shift+enter" ? "Shift+Enter" : "Enter";
   for (const ch of text) {
+    if (ch === "\r") continue; // CRLF drafts would otherwise double-break
+    if (ch === "\n") {
+      await page.keyboard.press(newlineKey);
+      await randomWait(150, 400);
+      continue;
+    }
     await page.keyboard.type(ch, { delay: randomInt(40, 160) });
     if (Math.random() < 0.03) await randomWait(300, 900); // occasional "thinking" pause
   }
