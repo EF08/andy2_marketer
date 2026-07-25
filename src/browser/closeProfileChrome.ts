@@ -59,11 +59,17 @@ function psLiteral(value: string): string {
  * single quotes only, so nothing can collide with the outer quoting again.
  */
 function killProfileChromeWin(resolvedDir: string): number {
+  // `exit 0` matters: killing a parent Chrome takes its children with it, so the next
+  // Stop-Process hits a pid that's already gone. That error is suppressed but still
+  // leaves PowerShell exiting non-zero, which made execFileSync throw and report a
+  // successful kill as "could not enumerate".
   const script = [
+    `$ErrorActionPreference = 'SilentlyContinue';`,
     `$dir = ${psLiteral(resolvedDir.toLowerCase())};`,
-    `$procs = Get-CimInstance Win32_Process |`,
-    `  Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($dir) };`,
-    `foreach ($p in $procs) { Write-Output $p.ProcessId; Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }`,
+    `$procs = @(Get-CimInstance Win32_Process |`,
+    `  Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($dir) });`,
+    `foreach ($p in $procs) { Write-Output $p.ProcessId; Stop-Process -Id $p.ProcessId -Force }`,
+    `exit 0`,
   ].join(" ");
 
   try {
