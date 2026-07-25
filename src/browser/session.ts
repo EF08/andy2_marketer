@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ChildProcess } from "node:child_process";
 import { BrowserContext, chromium } from "playwright";
 import { MarketerConfig } from "../config/types";
 import { applyStealthPatches } from "./stealth";
@@ -87,12 +88,51 @@ async function launchCdp(userDataDir: string, config: MarketerConfig): Promise<B
   return {
     context: cdp.context,
     close: async () => {
-      await cdp.browser.close();
-      // browser.close() only disconnects Playwright over CDP — kill Chrome too.
-      if (!cdp.chromeProcess.killed) cdp.chromeProcess.kill();
+      // Close every tab the way a person would. When the last window goes,
+      // Chrome shuts down through its normal path and writes "exit_type":
+      // "Normal" to Preferences. Playwright's browser.close() only DISCONNECTS
+      // a CDP-attached Chrome, and process.kill() on Windows is a hard
+      // TerminateProcess — either one leaves the profile marked as crashed, and
+      // then every launch opens with "Restore pages?".
+      try {
+        for (const context of cdp.browser.contexts()) {
+          for (const page of context.pages()) {
+            await page.close().catch(() => { /* already closed */ });
+          }
+        }
+      } catch { /* browser already gone */ }
+
+      let exited = await waitForProcessExit(cdp.chromeProcess, 10_000);
+
+      if (!exited) {
+        // Something (a background page, a beforeunload) kept it alive — ask it to quit.
+        try {
+          const cdpSession = await cdp.browser.newBrowserCDPSession();
+          await cdpSession.send("Browser.close");
+        } catch { /* browser already gone */ }
+        exited = await waitForProcessExit(cdp.chromeProcess, 10_000);
+      }
+
+      if (exited) {
+        console.log("[session] Chrome closed gracefully.");
+      } else {
+        cdp.chromeProcess.kill();
+        console.log(`[session] Chrome didn't exit in time — killed (pid=${cdp.chromeProcess.pid})`);
+      }
+
+      try { await cdp.browser.close(); } catch { /* already disconnected */ }
       console.log("[session] Browser closed.");
     },
   };
+}
+
+/** Resolves true once the process exits, or false after timeoutMs. */
+function waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    proc.once("exit", () => { clearTimeout(timer); resolve(true); });
+  });
 }
 
 export async function launchSession(config: MarketerConfig): Promise<BrowserSession> {

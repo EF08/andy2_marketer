@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { chromium, Browser, BrowserContext } from "playwright";
 import { detectChromeExecutable } from "./chromePaths";
 import { closeProfileChrome } from "./closeProfileChrome";
+import { clearCrashExitFlags } from "./crashFlags";
 
 export type CdpChromeSession = {
   browser: Browser;
@@ -65,6 +66,10 @@ export async function launchChromeAndConnectOverCdp(params: {
   const dtap = path.join(params.userDataDir, "DevToolsActivePort");
   try { fs.unlinkSync(dtap); } catch { /* ignore */ }
 
+  // Step 2b: clear any sticky crash flag left by a previous ungraceful exit,
+  // otherwise Chrome greets every launch with "Restore pages?".
+  clearCrashExitFlags(params.userDataDir, params.profileDirectory ?? "Default");
+
   // Step 3: build Chrome args — minimal, no verbose logging.
   const args = [
     `--remote-debugging-port=${port}`,
@@ -73,6 +78,7 @@ export async function launchChromeAndConnectOverCdp(params: {
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
+    "--hide-crash-restore-bubble", // belt and braces: never show the restore prompt
   ];
   if (params.profileDirectory) {
     args.push(`--profile-directory=${params.profileDirectory}`);
