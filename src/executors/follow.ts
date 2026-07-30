@@ -1,5 +1,6 @@
 import { MarketerConfig } from "../config/types";
 import { randomWait } from "../browser/humanize";
+import { adapterExec, platformsSupporting } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import { ActionError, gotoX, profileUrl, resolveHandle, toFailure, withX } from "./xCommon";
 
@@ -12,8 +13,10 @@ import { ActionError, gotoX, profileUrl, resolveHandle, toFailure, withX } from 
  */
 export async function runFollow(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
+    const impl = adapterExec(action.platform, "follow");
+    if (impl) return await impl(action, config);
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `follow is only implemented for 'twitter' (got '${action.platform ?? "none"}')`);
+      throw new ActionError("bad_params", `follow isn't implemented for '${action.platform ?? "none"}' (supported: ${platformsSupporting("follow").join(", ")})`);
     }
     const handle = resolveHandle(action.params.handle ?? action.params.targetUrl);
     const undo = action.params.undo === true;

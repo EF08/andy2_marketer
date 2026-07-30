@@ -1,6 +1,7 @@
 import { Page } from "playwright";
 import { MarketerConfig } from "../config/types";
 import { randomWait } from "../browser/humanize";
+import { adapterExec, platformsSupporting } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import {
   ActionError, extractTweets, gotoX, scrollForTweets, toFailure, waitForTweets, withX,
@@ -20,8 +21,10 @@ const TAB_PARAM: Record<Tab, string> = { latest: "&f=live", top: "", people: "&f
  */
 export async function runSearch(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
+    const impl = adapterExec(action.platform, "search");
+    if (impl) return await impl(action, config);
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `search is only implemented for 'twitter' (got '${action.platform ?? "none"}')`);
+      throw new ActionError("bad_params", `search isn't implemented for '${action.platform ?? "none"}' (supported: ${platformsSupporting("search").join(", ")})`);
     }
     const query = String(action.params.query ?? "").trim();
     if (!query) throw new ActionError("bad_params", "params.query is required");

@@ -1,6 +1,7 @@
 import { Page } from "playwright";
 import { MarketerConfig } from "../config/types";
 import { humanType, randomWait } from "../browser/humanize";
+import { adapterExec, platformsSupporting } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import { ActionError, gotoX, profileUrl, resolveHandle, toFailure, withX } from "./xCommon";
 
@@ -36,8 +37,13 @@ async function assertChatUnlocked(page: Page): Promise<void> {
  */
 export async function runDm(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
+    const impl = adapterExec(action.platform, "dm");
+    if (impl) return await impl(action, config);
+    if (action.platform === "youtube") {
+      throw new ActionError("bad_params", "YouTube has no direct messages (removed in 2019) — comment on a video instead.");
+    }
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `dm is only implemented for 'twitter' (got '${action.platform ?? "none"}')`);
+      throw new ActionError("bad_params", `dm isn't implemented for '${action.platform ?? "none"}' (supported: ${platformsSupporting("dm").join(", ")})`);
     }
     const handle = resolveHandle(action.params.handle ?? action.params.targetUrl);
     const text = String(action.params.text ?? "").trim();

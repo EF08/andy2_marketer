@@ -2,10 +2,11 @@ import { Page } from "playwright";
 import { MarketerConfig } from "../config/types";
 import { launchSession } from "../browser/session";
 import { humanizePage, randomWait } from "../browser/humanize";
+import { adapterExec } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import {
-  ActionError, extractTweets, focalTweet, gotoX, normalizeXUrl, profileUrl, resolveHandle,
-  scrollForTweets, statusIdOf, toFailure, waitForTweets, withX,
+  ActionError, extractTweets, focalTweet, gotoX, normalizeXUrl, profileUrl, requireStatusUrl,
+  resolveHandle, scrollForTweets, statusIdOf, toFailure, waitForTweets, withX,
 } from "./xCommon";
 
 const MAX_TEXT_CHARS = 20_000;
@@ -17,18 +18,26 @@ const ALLOWED_HOSTS = [
 /**
  * Read side. `params.what` picks the shape:
  *
- *   thread   — an X post plus the replies under it (structured)
+ *   thread   — a post/video plus the replies/comments under it (structured)
  *   comments — the same, replies only
- *   profile  — an X profile's header stats plus recent posts
- *   feed     — the X home timeline
+ *   profile  — a profile's header stats plus recent posts (youtube: also `channel`)
+ *   feed     — the X home timeline (X-only)
  *   page     — (default) any allowed page: title + visible text
  *
- * The structured modes are X-only for now; `page` still works on all five platforms,
- * which is what makes "read that IG profile" answerable today.
+ * `page` works on all five platforms from one generic path below; the structured
+ * modes dispatch per platform — X inline here, the rest via the adapter registry.
  */
 export async function runScrape(action: Action, config: MarketerConfig): Promise<ActionResult> {
   const what = String(action.params.what ?? "page").toLowerCase();
   try {
+    if (what === "page" || what === "") return await scrapePage(action, config);
+
+    const impl = adapterExec(action.platform, "scrape");
+    if (impl) return await impl(action, config);
+    if (action.platform && action.platform !== "twitter") {
+      throw new ActionError("bad_params", `structured scrape isn't implemented for '${action.platform}' — use what:'page' for a raw read.`);
+    }
+
     switch (what) {
       case "thread":
       case "comments":
@@ -37,11 +46,10 @@ export async function runScrape(action: Action, config: MarketerConfig): Promise
         return await scrapeProfile(action, config);
       case "feed":
         return await scrapeFeed(action, config);
-      case "page":
-      case "":
-        return await scrapePage(action, config);
+      case "post_metrics":
+        return await scrapePostMetrics(action, config);
       default:
-        throw new ActionError("bad_params", `params.what must be page|thread|comments|profile|feed (got '${what}')`);
+        throw new ActionError("bad_params", `params.what must be page|thread|comments|profile|feed|post_metrics (got '${what}')`);
     }
   } catch (e) {
     return toFailure(e);
@@ -173,6 +181,47 @@ async function readProfileHeader(page: Page) {
       following: countFrom("/following"),
       followers: countFrom("/verified_followers") ?? countFrom("/followers"),
     };
+  });
+}
+
+/* ── X: batched post metrics (feeds the posts ledger's time series) ── */
+
+/**
+ * Read engagement for a batch of our own permalinks in ONE browser session.
+ *
+ * One session matters: a 25-post sweep that opened 25 browsers would take ten minutes and
+ * hammer the profile. A URL that no longer resolves comes back with an error instead of
+ * silently vanishing — a deleted post is a finding, not a gap.
+ */
+async function scrapePostMetrics(action: Action, config: MarketerConfig): Promise<ActionResult> {
+  const raw = action.params.urls ?? action.params.targetUrls ?? [];
+  if (!Array.isArray(raw) || !raw.length) {
+    throw new ActionError("bad_params", "what:'post_metrics' needs params.urls — an array of permalinks (get them from marketer_metric_targets)");
+  }
+  const urls = raw.slice(0, 30).map((u: unknown) => requireStatusUrl(u));
+
+  return withX(config, async (page) => {
+    const out: any[] = [];
+    for (const { url, statusId } of urls) {
+      try {
+        await gotoX(page, url, config);
+        const rendered = await waitForTweets(page, 15_000).catch(() => false);
+        if (!rendered) { out.push({ permalink: url, error: "not_found" }); continue; }
+        const t = (await extractTweets(page, 10)).find((x) => x.permalink?.includes(statusId));
+        if (!t) { out.push({ permalink: url, error: "not_matched" }); continue; }
+        // Normalized to the ledger's vocabulary: replies→comments, reposts→shares.
+        out.push({
+          permalink: url,
+          metrics: { views: t.metrics.views, likes: t.metrics.likes, comments: t.metrics.replies, shares: t.metrics.reposts },
+        });
+      } catch (e) {
+        out.push({ permalink: url, error: (e as Error).message.slice(0, 120) });
+      }
+      await randomWait(1_200, 2_600); // a sweep should read like someone scrolling, not a bot
+    }
+    const withMetrics = out.filter((o) => o.metrics).length;
+    console.log(`[scrape] twitter post_metrics: ${withMetrics}/${out.length} read`);
+    return { ok: true, result: { what: "post_metrics", platform: "twitter", count: out.length, read: withMetrics, posts: out } };
   });
 }
 

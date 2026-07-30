@@ -1,5 +1,6 @@
 import { MarketerConfig } from "../config/types";
 import { randomWait } from "../browser/humanize";
+import { adapterExec, platformsSupporting } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import {
   ActionError, evidence, extractTweets, focalTweet, gotoX, requireStatusUrl, toFailure,
@@ -14,8 +15,10 @@ import {
  */
 export async function runLike(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
+    const impl = adapterExec(action.platform, "like");
+    if (impl) return await impl(action, config);
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `like is only implemented for 'twitter' (got '${action.platform ?? "none"}')`);
+      throw new ActionError("bad_params", `like isn't implemented for '${action.platform ?? "none"}' (supported: ${platformsSupporting("like").join(", ")})`);
     }
     const { url, statusId } = requireStatusUrl(action.params.targetUrl);
     const undo = action.params.undo === true;

@@ -11,6 +11,7 @@ import { MarketerConfig } from "../config/types";
 import { launchSession } from "../browser/session";
 import { randomWait } from "../browser/humanize";
 import { PLATFORM_DEFS } from "../platforms";
+import { guardOutward } from "./identity";
 import type { ActionResult } from "./index";
 
 /** Structured failure taxonomy — the backend routes on these instead of parsing prose. */
@@ -58,6 +59,7 @@ export async function gotoX(page: Page, url: string, config: MarketerConfig): Pr
   await randomWait(2_200, 3_800); // client-side render
   await clearInterstitials(page, config);
   await assertLoggedIn(page);
+  await guardOutward(page, "twitter"); // never act as an account this brand doesn't own
 }
 
 /**

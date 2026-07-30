@@ -30,17 +30,17 @@ Point at a non-production backend with `MARKETER_BACKEND_BASEURL=http://...`.
 | Action | Params | Coverage |
 |---|---|---|
 | `check_session` | `{platforms?}` | all 5 platforms — login-health sweep |
-| `scrape` | `{what: page\|thread\|comments\|profile\|feed, targetUrl\|handle, limit?, includeReplies?}` | `page` on all 5; the structured shapes are X |
-| `search` | `{query, tab: latest\|top\|people, limit?}` | X — posts with permalinks + engagement counts |
+| `scrape` | `{what: page\|thread\|comments\|profile\|feed, targetUrl\|handle, limit?, includeReplies?}` | `page` on all 5; structured shapes on all 5 (`feed` is X-only; YT also takes `video`/`channel`) |
+| `search` | `{query, tab?, limit?}` | X (`latest\|top\|people`), TikTok (`top\|videos\|accounts`), YouTube (`videos\|channels`), FB (`posts\|people\|pages`), IG (no tabs — returns accounts + hashtags) |
 | `post` | `{text}` | X (text only — no asset pipeline yet) |
-| `reply` / `comment` | `{targetUrl, text}` | X (same act on X; they split when other platforms land) |
-| `like` | `{targetUrl, undo?}` | X |
-| `follow` | `{handle\|targetUrl, undo?}` | X |
-| `dm` | `{handle, text}` | X (needs X Chat unlocked in the profile — see below) |
+| `reply` / `comment` | `{targetUrl, text}` | X, IG (post/reel URL), TikTok (video URL, ≤150 chars), YouTube (watch URL), FB (post/reel/video URL) — a comment on the target everywhere |
+| `like` | `{targetUrl, undo?}` | X, IG, TikTok, YouTube, FB |
+| `follow` | `{handle\|targetUrl, undo?}` | X, IG, TikTok, YouTube (= subscribe), FB (pages/profiles with a Follow button; friend requests are not automated) |
+| `dm` | `{handle, text}` | X (needs X Chat unlocked — see below), IG, TikTok + FB (only where a Message button exists). YouTube has no DMs |
 
 Every act type also takes `dryRun: true`: it drives the whole flow and stops just before sending. Use it to rehearse anything risky.
 
-Instagram/TikTok/Facebook/YouTube can be read and session-checked today; acting on them needs their own adapters (and, for IG/TikTok posting, the asset pipeline from [MASTERPLAN.md](MASTERPLAN.md) §2.4).
+*Posting* beyond X needs the asset pipeline from [MASTERPLAN.md](MASTERPLAN.md) §2.4 (YouTube uploads are planned via the official API; FB text posting waits on a solid composer-verification story).
 
 **X Chat passcode:** if X has locked Messages behind a device-managed passcode, `/messages` redirects to a PIN-recovery screen and `dm` fails with a `login_required` telling you so. Fix it once by hand — `npm run login`, open Messages, "Send temporary passcode", enter the code from your phone.
 
@@ -49,7 +49,7 @@ Instagram/TikTok/Facebook/YouTube can be read and session-checked today; acting 
 - `src/agent/agent.ts` — poll loop: heartbeat + claim + execute + complete. Single-instance lockfile in `data/agent.lock`; log in `data/agent.log`; `data/agent-status.json` for the widget.
 - `src/browser/` — Chrome control: spawns real Chrome with `--remote-debugging-port=9223` (crawler uses 9222, so both agents coexist), attaches Playwright over CDP, strips automation args, injects stealth patches. Dedicated profile in `profiles/automation-profile` — never Andy's live Chrome profile.
 - `src/platforms.ts` — per-platform home URLs + login-state detectors.
-- `src/executors/` — one module per action type, plus `xCommon.ts`: the shared X machinery (session lifecycle, login gate, interstitials, focal-tweet detection, tweet extraction, send confirmation, failure taxonomy). A new X action should be flow, not boilerplate.
+- `src/executors/` — one module per action type; each dispatches per platform. X's flows live inline (plus `xCommon.ts`, the shared X machinery); Instagram/TikTok/YouTube/Facebook live in one adapter file each (registered in `adapters.ts`), on top of `webCommon.ts` (shared session lifecycle, login gates, count parsing, failure taxonomy). A new platform = one adapter file + one registry line.
 
 Two rails guard every outward action:
 
@@ -62,8 +62,10 @@ Failures carry a machine-readable `failureCode` (`login_required`, `rate_limited
 
 ```bash
 npx tsx scripts/probe.ts <url> [jsExpr | @file.js]   # open a page in the profile, run an expression, print JSON
+npx tsx scripts/explore.ts @steps.json               # drive a page through steps (goto/scroll/click/type/eval) — for lazy-loading UIs
+npx tsx scripts/runAction.ts '<action>' | @file.json # run actions through the real executors, no queue; act types only with dryRun:true
 ```
 
-X's DOM changes; the probe is how you check a selector against the live page before codifying it. Run it only while the agent is idle — both drive the same Chrome profile.
+Platform DOMs change; the probes are how you check a selector against the live page before codifying it. Run them only while the agent is idle — everything drives the same Chrome profile.
 
 Only server-side **approved** actions are ever handed to this agent — the approval queue, autonomy policy, and kill switch live in `a1a2-command-center/apps/marketer`. Claude drives everything remotely through the `marketer_*` MCP tools at `/api/marketer/mcp`; the cockpit is [andy2_marketer_dashboard](../andy2_marketer_dashboard).

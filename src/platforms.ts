@@ -41,9 +41,11 @@ export const PLATFORM_DEFS: Record<Platform, PlatformDef> = {
   tiktok: {
     home: "https://www.tiktok.com/",
     detectLoggedIn: async (page) => {
-      if (await has(page, '[data-e2e="top-login-button"]')) return false;
-      // The signed-in rail: profile, upload, inbox, messages. Any one of them is enough.
+      // Positive evidence first: TikTok flashes a login CTA in the header while pages
+      // (search especially) hydrate, even on a signed-in session — the signed-in rail
+      // (profile, upload, inbox, messages) is the reliable signal.
       if (await has(page, '[data-e2e="profile-icon"], [data-e2e="nav-profile"], [data-e2e="nav-upload"], [data-e2e="inbox-icon"], [data-e2e="nav-messages"]')) return true;
+      if (await has(page, '[data-e2e="top-login-button"]')) return false;
       return null;
     },
   },

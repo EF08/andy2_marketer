@@ -1,5 +1,6 @@
 import { MarketerConfig } from "../config/types";
 import { humanType, randomWait } from "../browser/humanize";
+import { adapterExec, platformsSupporting } from "./adapters";
 import type { Action, ActionResult } from "./index";
 import {
   ActionError, evidence, extractTweets, findPermalinkByText, focalTweet, gotoX,
@@ -19,8 +20,12 @@ const MAX_REPLY_CHARS = 280;
  */
 export async function runReply(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
+    // On every platform we run, replying and commenting are the same act on a target
+    // post/video — the platform adapters expose it as `comment`.
+    const impl = adapterExec(action.platform, "comment");
+    if (impl) return await impl(action, config);
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `reply/comment is only implemented for 'twitter' (got '${action.platform ?? "none"}')`);
+      throw new ActionError("bad_params", `reply/comment isn't implemented for '${action.platform ?? "none"}' (supported: ${platformsSupporting("comment").join(", ")})`);
     }
     const { url, statusId } = requireStatusUrl(action.params.targetUrl);
     const text = String(action.params.text ?? "").trim();

@@ -1,5 +1,6 @@
 import { MarketerConfig } from "../config/types";
 import { humanizePage, humanType, randomWait } from "../browser/humanize";
+import { attachImage, stageImage } from "./imageBridge";
 import type { Action, ActionResult } from "./index";
 import {
   ActionError, findPermalinkByText, gotoX, ownHandle, submitComposer, toFailure,
@@ -18,7 +19,9 @@ const MAX_POST_CHARS = 280;
 export async function runPost(action: Action, config: MarketerConfig): Promise<ActionResult> {
   try {
     if (action.platform !== "twitter") {
-      throw new ActionError("bad_params", `post is only implemented for 'twitter' so far (got '${action.platform ?? "none"}')`);
+      // IG/TikTok posts require media (asset pipeline is a separate build) and
+      // YouTube uploads are planned to go through the official Data API.
+      throw new ActionError("bad_params", `post is only implemented for 'twitter' — the other platforms need the media/asset pipeline (got '${action.platform ?? "none"}')`);
     }
     const text = String(action.params.text ?? "").trim();
     if (!text) throw new ActionError("bad_params", "params.text is required");
@@ -26,11 +29,16 @@ export async function runPost(action: Action, config: MarketerConfig): Promise<A
       throw new ActionError("bad_params", `text is ${text.length} chars — over the ${MAX_POST_CHARS} limit`);
     }
     if (action.params.assetId) {
-      throw new ActionError("bad_params", "media posts aren't supported yet — the asset pipeline is not built.");
+      throw new ActionError("bad_params", "assetId isn't supported — there is no asset registry. Pass params.imageUrl (https) instead.");
     }
     const dryRun = action.params.dryRun === true;
 
-    return await withX(config, async (page) => {
+    // Fetched before the browser opens: a bad image URL should fail without ever having
+    // touched a composer.
+    const staged = action.params.imageUrl ? await stageImage(action.params.imageUrl) : null;
+
+    try {
+      return await withX(config, async (page) => {
       await gotoX(page, "https://x.com/home", config);
       const handle = await ownHandle(page);
       await humanizePage(page, config.behavior);
@@ -43,12 +51,14 @@ export async function runPost(action: Action, config: MarketerConfig): Promise<A
       await randomWait(600, 1_500);
       await humanType(page, text);
       await randomWait(800, 2_000);
+      if (staged) await attachImage(page, staged, "twitter");
 
       if (dryRun) {
         return {
           ok: true,
           result: {
             platform: "twitter", action: "post", dryRun: true, handle, chars: text.length,
+            image: staged ? { bytes: staged.bytes, contentType: staged.contentType } : null,
             sent: false, verified: null, note: "dryRun — composer filled, nothing was sent.",
           },
         };
@@ -88,11 +98,15 @@ export async function runPost(action: Action, config: MarketerConfig): Promise<A
         ok: true,
         result: {
           platform: "twitter", action: "post", handle, chars: text.length,
+          image: staged ? { bytes: staged.bytes, contentType: staged.contentType } : null,
           sent: true, verified, permalink, toast: outcome.toast,
           note: verified ? undefined : "sent, but it could not be found on the timeline afterwards — check manually",
         },
       };
-    });
+      });
+    } finally {
+      staged?.cleanup();
+    }
   } catch (e) {
     return toFailure(e);
   }

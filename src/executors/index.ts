@@ -7,6 +7,7 @@ import { runReply } from "./reply";
 import { runLike } from "./like";
 import { runFollow } from "./follow";
 import { runDm } from "./dm";
+import { setActionContext } from "./identity";
 
 export type Action = {
   actionId: string;
@@ -16,6 +17,10 @@ export type Action = {
   /** Server-side approval stamp; act types refuse to run without it (defense in depth). */
   approvedAt?: string | null;
   status?: string;
+  /** Which brand is acting. One profile is one identity, so this matters — see identity.ts. */
+  brandId?: string | null;
+  /** The handle this brand declared for the platform; outward acts refuse to run as anyone else. */
+  expectedHandle?: string | null;
 };
 
 export type ActionResult = {
@@ -46,6 +51,17 @@ export async function executeAction(action: Action, config: MarketerConfig): Pro
     };
   }
 
+  // Publish the action so each platform's navigation helper can enforce the identity guard
+  // (see identity.ts) without every flow having to remember to ask.
+  setActionContext(action);
+  try {
+    return await dispatch(action, config);
+  } finally {
+    setActionContext(null);
+  }
+}
+
+async function dispatch(action: Action, config: MarketerConfig): Promise<ActionResult> {
   switch (action.type) {
     case "check_session":
       return runCheckSession(action, config);
@@ -56,7 +72,7 @@ export async function executeAction(action: Action, config: MarketerConfig): Pro
     case "post":
       return runPost(action, config);
     case "reply":
-    case "comment": // on X these are the same act; other platforms will split them later
+    case "comment": // the same act everywhere we run: a comment on the target post/video
       return runReply(action, config);
     case "like":
       return runLike(action, config);
