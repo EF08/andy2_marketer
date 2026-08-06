@@ -151,7 +151,79 @@ and the dashboard, so every new field must be added to it.
 
 `needs_review` means **it may have gone out**. Never blind-retry one.
 
-## 7. Agent poll contract
+## 7. Media assets (`media_assets` collection) + the `generate_media` action
+
+The one action type that produces a file instead of touching a platform. Runs like a read
+(auto, no approval — nothing publishes), `platform: null`, executed by `generateMedia.ts`
+driving chatgpt.com in the logged-in profile.
+
+`params`:
+
+```jsonc
+{
+  "title": "Prep School Offers Hero",
+  "prompt": "…",                 // REQUIRED. The full, standalone image prompt, verbatim —
+                                 // everything the generator needs with no other context.
+  "aspectRatio": "4:5",          // 1:1 | 4:5 | 2:3 | 3:2 | 9:16 | 16:9 (default 4:5).
+                                 // Non-native ratios are center-cropped from the nearest
+                                 // native render; the crop box is recorded.
+  "slug": "prep-school-offers",  // optional; names the folder (derived from title otherwise)
+  "referenceImages": [           // optional, ≤4 — attached to the ChatGPT prompt via the
+    {                            // composer's real file input; the prompt text must say what
+      "url": "https://…",        // each attachment is for. url = https (image-bridge checks:
+      "path": "C:\\…\\ad.png",   // content-type + 12MB cap) OR path = file already on the
+      "note": "the real site"    // agent PC (a prior winning ad, a saved screenshot).
+    }
+  ],
+  "context": {                   // optional, free-form provenance — the "why it looks like this"
+    "concept": "…", "angle": "…", "offer": "…", "referenceUrls": ["…"],
+    "decision": "inherit|iterate|fresh — and why (see the media-drafting playbook)", "notes": "…"
+  },
+  "dryRun": true                 // optional: open ChatGPT, verify the composer, submit nothing
+}
+```
+
+Files land on the agent's PC under `data/media/<brandId>/<YYYY-MM-DD>_<slug>/` —
+`ad-<ratio>.png` (cropped final), `source.png` (uncropped native render), `manifest.json`
+(the complete generation story). The completion rollup upserts one `media_assets` doc per
+action (keyed on `actionId`, retry-safe) and stamps `mediaAssetId` back onto the action:
+
+```jsonc
+{
+  "brandId": "playersites", "actionId": "…",
+  "title": "…", "slug": "…",
+  "status": "draft",             // draft | selected | testing | winner | retired
+  "generator": "chatgpt",
+  "prompt": "…",                 // the VERBATIM submitted prompt (incl. the executor's
+                                 // orientation suffix) — the recall anchor
+  "context": { },                // params.context, verbatim
+  "referenceImages": [           // what the generator was shown (recall): source + sha256
+    { "source": "https://… or C:\\…", "note": "…", "bytes": 1234, "sha256": "…" }
+  ],
+  "aspectRatio": "4:5",
+  "files": [{ "path", "role", "width", "height", "ratio", "bytes", "sha256" }],
+  "savedDir": "…", "manifestPath": "…", "conversationUrl": "https://chatgpt.com/c/…",
+  "thumbnailDataUrl": "data:image/jpeg;…",   // ~300px, for the dashboard grid
+  "experiments": [               // append-only, capped at 40 (the metric-snapshot pattern)
+    {
+      "at": "…", "platform": "meta", "label": "$25 traffic test, parents-GTA",
+      "budgetUsd": 25, "spendUsd": 24.6,
+      "campaignId": "…", "adsetId": "…", "adId": "…",      // Meta ids
+      "metrics": { "impressions": 4100, "clicks": 87, "ctr": 2.1, "leads": 2, "cpl": 12.3 },
+      "verdict": "winner",       // winner | loser | inconclusive | short free text
+      "notes": "…"
+    }
+  ],
+  "createdAt": "…", "updatedAt": "…"
+}
+```
+
+Experiment numbers are read from Meta ads by Claude-in-session and recorded via
+`marketer_media_track` — the backend stores them verbatim and never computes or invents a
+metric. `marketer_media_list` returns lean rows (no prompt/context/experiments);
+`marketer_media_get` is the full "how was this ad made, top to bottom" answer.
+
+## 8. Agent poll contract
 
 `POST /api/marketer/agent/poll` (header `x-marketer-key`)
 
@@ -172,7 +244,7 @@ and the dashboard, so every new field must be added to it.
 }
 ```
 
-## 8. Failure taxonomy (agent → backend)
+## 9. Failure taxonomy (agent → backend)
 
 `result.failureCode` is what the backend routes on: `bad_params`, `login_required`, `not_found`,
 `ui_changed`, `rate_limited`, `blocked`, `ambiguous`, `platform_error`, `not_approved`.

@@ -30,6 +30,7 @@ async function main() {
       type: String(a.type ?? ""),
       platform: a.platform ?? null,
       params: a.params ?? {},
+      brandId: a.brandId ?? null, // generate_media files under data/media/<brandId>/
       // The local stamp only exists so dryRun flows can pass the dispatch gate.
       approvedAt: new Date().toISOString(),
     };

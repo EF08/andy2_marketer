@@ -7,6 +7,7 @@ import { runReply } from "./reply";
 import { runLike } from "./like";
 import { runFollow } from "./follow";
 import { runDm } from "./dm";
+import { runGenerateMedia } from "./generateMedia";
 import { setActionContext } from "./identity";
 
 export type Action = {
@@ -80,6 +81,8 @@ async function dispatch(action: Action, config: MarketerConfig): Promise<ActionR
       return runFollow(action, config);
     case "dm":
       return runDm(action, config);
+    case "generate_media": // produces a local file via chatgpt.com — publishes nothing
+      return runGenerateMedia(action, config);
     default:
       return { ok: false, error: `No executor for action type '${action.type}'.` };
   }
