@@ -22,6 +22,7 @@
  * `data-message-author-role` on turns — never key detection on it.
  */
 import fs from "fs";
+import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { Page } from "playwright";
@@ -178,9 +179,15 @@ export async function runGenerateMedia(action: Action, config: MarketerConfig): 
       const manifestPath = path.join(dir, "manifest.json");
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
+      // Andy's browse copy: every finished ad also lands in the OneDrive Desktop Ads
+      // folder, named to sort by date. Best-effort — a missing OneDrive must never fail
+      // a successful generation; data/media stays the system of record.
+      const exportPath = exportToDesktopAds(brandId, slug, path.join(dir, adName));
+
       return {
         ok: true,
         result: {
+          exportPath,
           generator: "chatgpt", slug,
           requestedRatio: ratioKey,
           nativeRatio: `${processed.nativeW}x${processed.nativeH}`,
@@ -333,6 +340,20 @@ async function waitForGeneratedImage(page: Page): Promise<{ src: string }> {
 }
 
 /* ────────────────────────────── files ────────────────────────────── */
+
+/** Copy the finished ad into OneDrive\Desktop\Ads\<brand>\ for easy human browsing. */
+function exportToDesktopAds(brandId: string, slug: string, adFile: string): string | null {
+  try {
+    const dest = path.join(os.homedir(), "OneDrive", "Desktop", "Ads", brandId);
+    if (!fs.existsSync(path.join(os.homedir(), "OneDrive", "Desktop"))) return null;
+    fs.mkdirSync(dest, { recursive: true });
+    const out = path.join(dest, `${dateStamp()} - ${slug}.png`);
+    fs.copyFileSync(adFile, out);
+    return out;
+  } catch {
+    return null; // browse copy only — never fail the action over it
+  }
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "ad";
