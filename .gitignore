@@ -3,5 +3,6 @@ dist/
 data/
 profiles/
 backend.local.json
+googleads.local.json
 .env
 .DS_Store

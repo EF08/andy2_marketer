@@ -57,6 +57,13 @@ Plus one guard that sits inside the agent: **identity** (`identity.ts`). One Chr
 one logged-in identity per platform, so an outward act whose brand declares a different handle
 is refused (`wrong_identity`) rather than published from the wrong account.
 
+The paid surface (ADR 004) rides the same rails with API calls instead of a browser:
+`ads_report`/`ads_mutate` on platform `google` execute against the Google Ads REST API using
+credentials that exist only on this PC (`googleads.local.json`). The identity guard's analog is
+the brand's declared `googleAds.customerId`, stamped onto the claimed action like
+`expectedHandle`; the linter's analog for money is the `maxDailyBudget` cap — no cap declared,
+no spend.
+
 ## Collections (Mongo, DB `marketer`)
 
 | Collection | What it holds |

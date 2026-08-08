@@ -8,6 +8,7 @@ import { runLike } from "./like";
 import { runFollow } from "./follow";
 import { runDm } from "./dm";
 import { runGenerateMedia } from "./generateMedia";
+import { runAdsReport, runAdsMutate } from "./googleAds";
 import { setActionContext } from "./identity";
 
 export type Action = {
@@ -22,6 +23,8 @@ export type Action = {
   brandId?: string | null;
   /** The handle this brand declared for the platform; outward acts refuse to run as anyone else. */
   expectedHandle?: string | null;
+  /** Claim-time stamp of the brand's ad account + money cap (the expectedHandle of the paid surface). */
+  googleAds?: { customerId?: string | null; maxDailyBudget?: number | null } | null;
 };
 
 export type ActionResult = {
@@ -32,8 +35,10 @@ export type ActionResult = {
   sessions?: SessionCheckResult;
 };
 
-/** Outward-facing types. These mutate the world, so they carry the extra guardrails. */
-export const ACT_TYPES = ["post", "reply", "comment", "like", "follow", "dm"];
+/** Outward-facing types. These mutate the world, so they carry the extra guardrails.
+ *  ads_mutate belongs here: it spends money through an API instead of posting through
+ *  a browser, but "never runs without a server-side approval stamp" applies the same. */
+export const ACT_TYPES = ["post", "reply", "comment", "like", "follow", "dm", "ads_mutate"];
 
 /**
  * Dispatch an action to its executor.
@@ -83,6 +88,10 @@ async function dispatch(action: Action, config: MarketerConfig): Promise<ActionR
       return runDm(action, config);
     case "generate_media": // produces a local file via chatgpt.com — publishes nothing
       return runGenerateMedia(action, config);
+    case "ads_report": // Google Ads API read — no browser involved
+      return runAdsReport(action, config);
+    case "ads_mutate": // Google Ads API act — spends money; approval enforced above
+      return runAdsMutate(action, config);
     default:
       return { ok: false, error: `No executor for action type '${action.type}'.` };
   }

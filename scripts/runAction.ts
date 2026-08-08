@@ -31,6 +31,7 @@ async function main() {
       platform: a.platform ?? null,
       params: a.params ?? {},
       brandId: a.brandId ?? null, // generate_media files under data/media/<brandId>/
+      googleAds: a.googleAds ?? null, // ads actions: {customerId, maxDailyBudget} — stamped by the backend in the real flow
       // The local stamp only exists so dryRun flows can pass the dispatch gate.
       approvedAt: new Date().toISOString(),
     };

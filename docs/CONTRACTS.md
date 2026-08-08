@@ -244,7 +244,58 @@ metric. `marketer_media_list` returns lean rows (no prompt/context/experiments);
 }
 ```
 
-## 9. Failure taxonomy (agent → backend)
+## 9. Google Ads (the paid surface — ADR 004)
+
+Two action types on `platform: "google"` (an *ads* platform — never valid for browser
+types, and browser platforms are never valid for these). Executed by the agent over the
+Google Ads REST API; no browser.
+
+**Brand profile field** (required before any ads action for that brand):
+
+```jsonc
+"googleAds": {
+  "customerId": "1234567890",   // 10 digits (dashes accepted, stripped) — the identity guard
+  "maxDailyBudget": 40          // daily cap, ad-account currency — the money rail; no cap = no spend
+}
+```
+
+**`ads_report`** (read, auto): `params` one of
+`{ what: "campaigns"|"keywords"|"ads"|"search_terms"|"account"|"accessible_customers", days?, limit? }`
+or `{ query: "<raw GAQL SELECT>" }`. Result: `{ rows, rowCount, totals?{impressions,clicks,cost,conversions} }`.
+
+**`ads_mutate`** (act, approval always, `dryRun` = Google-side `validateOnly`): `params.op`:
+
+| op | params | notes |
+|---|---|---|
+| `create_search_campaign` | `name, dailyBudget, finalUrl, headlines[3-15 ≤30ch], descriptions[2-4 ≤90ch], keywords?[{text,matchType}|string], path1?, path2?, locationIds?, languageIds?, activate?` | created **PAUSED** unless `activate:true`; Maximize-clicks bidding; one budget+campaign+ad group+RSA atomically |
+| `update_budget` | `campaignId, dailyBudget` | budget looked up from the campaign, `amount_micros` updated |
+| `set_status` | `campaignId, status: ENABLED\|PAUSED` | campaign level |
+
+Linter rules (`ads_*`): `ads_op`, `ads_identity` (no customerId), `ads_budget` /
+`ads_budget_cap` (missing, non-positive, over-cap, or uncapped budget — all block),
+`ads_structure` (RSA shape, finalUrl), plus the shared `banned_claim` / `do_not_mention` /
+`claim_untraceable` over the joined headline+description copy. `duplicate_idea`,
+`ai_disclosure`, and platform `length` are social-copy rules and are skipped.
+
+**Claim stamp** (poll response, the `expectedHandle` of money): actions of either type
+carry `"googleAds": { "customerId", "maxDailyBudget" }` copied from the brand at claim
+time. The executor refuses other accounts and over-cap budgets, and every mutation is
+verified by a GAQL re-read — a mismatch is `ambiguous` → `needs_review`.
+
+**Credentials** (agent PC only, gitignored `googleads.local.json`):
+
+```jsonc
+{
+  "clientId": "…apps.googleusercontent.com", "clientSecret": "…",
+  "developerToken": "…",                 // Google Ads API Center (manager account)
+  "refreshToken": "…",                   // written by scripts/googleads-auth.ts
+  "loginCustomerId": "…",                // manager (MCC) id, if access goes through one
+  "apiVersion": "v25",                   // optional; a Google sunset is a config edit
+  "allowedCustomerIds": ["1234567890"]   // optional local allowlist — last line of identity defense
+}
+```
+
+## 10. Failure taxonomy (agent → backend)
 
 `result.failureCode` is what the backend routes on: `bad_params`, `login_required`, `not_found`,
 `ui_changed`, `rate_limited`, `blocked`, `ambiguous`, `platform_error`, `not_approved`.
