@@ -1,21 +1,26 @@
 /**
- * generate_media — render a static ad image through chatgpt.com in the logged-in profile.
+ * generate_media — render a static ad image, preferring the OpenAI Image API and falling
+ * back to chatgpt.com in the logged-in profile.
  *
- * The one executor that PRODUCES a file instead of touching a social platform. Flow:
- * open a fresh ChatGPT chat, attach any reference images (real product screenshots, a
- * winning ad to inherit from), submit the drafted prompt verbatim (plus a deterministic
- * one-line suffix forcing image output in the right orientation), wait out the render,
- * pull the image through the page's own fetch (it holds the auth cookies), center-crop
- * to the requested ad ratio in an offscreen canvas, and save everything under
- *   data/media/<brandId>/<YYYY-MM-DD>_<slug>/
- * next to a manifest.json that records the complete generation story. The backend turns
- * the reported result into a media_assets row — between the two, "how was this ad made,
- * top to bottom" stays answerable with the PC off or the Mongo down, months later.
+ * The one executor that PRODUCES a file instead of touching a social platform.
  *
- * Not an outward act: nothing publishes. No identity guard (ChatGPT has no brand handle);
- * the only session question is "are we logged in enough to see the composer".
+ * TWO GENERATION PATHS, same contract either way (files under
+ * data/media/<brandId>/<YYYY-MM-DD>_<slug>/ + manifest.json + the media_assets rollup):
  *
- * DOM notes, verified live 2026-08-04 (first real render): composer `#prompt-textarea`
+ *  1. OpenAI API (2026-08-09, "for now" per Andy — ChatGPT web ran out of image credits):
+ *     when OPENAI_API_KEY resolves (env or the repo's gitignored .env), call gpt-image-2
+ *     directly — images/generations, or images/edits when reference images are attached.
+ *     gpt-image-2 accepts arbitrary sizes, so the exact ad ratio is rendered natively and
+ *     nothing is cropped. No browser involved.
+ *
+ *  2. ChatGPT web (the original path, kept intact as fallback when no key is present):
+ *     open a fresh chat in the logged-in profile, attach references, submit the prompt,
+ *     wait out the render, pull bytes through the page, center-crop in an offscreen canvas.
+ *
+ * Not an outward act: nothing publishes. No identity guard (neither path has a brand
+ * handle); the API's analog of "logged in" is a key that authenticates.
+ *
+ * DOM notes for path 2, verified live 2026-08-04: composer `#prompt-textarea`
  * (ProseMirror contenteditable), send `[data-testid="send-button"]`, stop
  * `[data-testid="stop-button"]`. Generated images carry `alt="Generated image: <title>"`
  * and a `backend-api/estuary/content` src. chatgpt.com does NOT render
@@ -25,6 +30,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import crypto from "crypto";
+import { execFileSync } from "node:child_process";
 import { Page } from "playwright";
 import { MarketerConfig } from "../config/types";
 import { randomWait } from "../browser/humanize";
@@ -40,15 +46,220 @@ const MIN_IMAGE_PX = 512; // anything smaller is an icon/avatar, not our render
 const MAX_REFERENCES = 4;
 const MAX_REF_BYTES = 12 * 1024 * 1024; // the image bridge's cap, applied to local paths too
 
-/** Requested ad ratio → the orientation ChatGPT can natively render, and the crop target. */
-const RATIOS: Record<string, { orientation: "square" | "portrait" | "landscape"; w: number; h: number }> = {
-  "1:1": { orientation: "square", w: 1, h: 1 },
-  "4:5": { orientation: "portrait", w: 4, h: 5 },
-  "2:3": { orientation: "portrait", w: 2, h: 3 },
-  "3:2": { orientation: "landscape", w: 3, h: 2 },
-  "9:16": { orientation: "portrait", w: 9, h: 16 },
-  "16:9": { orientation: "landscape", w: 16, h: 9 },
+/** Requested ad ratio → the orientation ChatGPT can natively render, the crop target,
+ *  and the exact pixel size the API path requests (gpt-image-2 takes arbitrary sizes). */
+// API sizes: gpt-image-2 takes arbitrary sizes but width and height must each be
+// divisible by 16 (it rejected 1080x1350 with exactly that message).
+const RATIOS: Record<string, { orientation: "square" | "portrait" | "landscape"; w: number; h: number; apiSize: string }> = {
+  "1:1": { orientation: "square", w: 1, h: 1, apiSize: "1024x1024" },
+  "4:5": { orientation: "portrait", w: 4, h: 5, apiSize: "1024x1280" },
+  "2:3": { orientation: "portrait", w: 2, h: 3, apiSize: "1024x1536" },
+  "3:2": { orientation: "landscape", w: 3, h: 2, apiSize: "1536x1024" },
+  "9:16": { orientation: "portrait", w: 9, h: 16, apiSize: "1152x2048" },
+  "16:9": { orientation: "landscape", w: 16, h: 9, apiSize: "2048x1152" },
 };
+
+/* ────────────────────────────── OpenAI API path ────────────────────────────── */
+
+const OPENAI_API_BASE = "https://api.openai.com/v1";
+const OPENAI_IMAGE_MODEL_DEFAULT = "gpt-image-2";
+const API_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Key resolution: env → the repo's gitignored .env, parsed by hand (Andy's rule: no
+ * dotenv dependency, ever). null = no key = use the ChatGPT web path.
+ */
+export function resolveOpenAIKey(): string | null {
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  try {
+    const envFile = fs.readFileSync(path.resolve(process.cwd(), ".env"), "utf-8");
+    const m = envFile.match(/^\s*OPENAI_API_KEY\s*=\s*("?)([^"\r\n]+)\1\s*$/m);
+    return m ? m[2].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function openAiImageModel(): string {
+  return process.env.OPENAI_IMAGE_MODEL || OPENAI_IMAGE_MODEL_DEFAULT;
+}
+
+/** One image out of the API: generations without references, edits with them. */
+async function callImagesApi(key: string, model: string, prompt: string, size: string, refs: StagedRef[]): Promise<Buffer> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
+  try {
+    let res: Response;
+    if (refs.length) {
+      const form = new FormData();
+      form.append("model", model);
+      form.append("prompt", prompt);
+      form.append("size", size);
+      form.append("quality", "high");
+      // (gpt-image-1's input_fidelity knob is gone — gpt-image-2 rejected it outright;
+      // high-fidelity reference handling is built into the model.)
+      for (const r of refs) {
+        const type = /\.png$/i.test(r.filePath) ? "image/png" : /\.webp$/i.test(r.filePath) ? "image/webp" : "image/jpeg";
+        form.append("image[]", new Blob([new Uint8Array(fs.readFileSync(r.filePath))], { type }), path.basename(r.filePath));
+      }
+      res = await fetch(`${OPENAI_API_BASE}/images/edits`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}` },
+        body: form,
+        signal: ctrl.signal,
+      });
+    } else {
+      res = await fetch(`${OPENAI_API_BASE}/images/generations`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({ model, prompt, size, quality: "high", n: 1 }),
+        signal: ctrl.signal,
+      });
+    }
+
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = body?.error?.message || `HTTP ${res.status}`;
+      if (res.status === 401) throw new ActionError("login_required", `OpenAI API key rejected — check OPENAI_API_KEY in .env. (${msg})`);
+      if (res.status === 429) throw new ActionError("rate_limited", `OpenAI API rate/quota limit: ${msg}`);
+      if (res.status === 400 && /content policy|safety|moderation/i.test(msg)) throw new ActionError("blocked", `OpenAI declined the prompt: ${msg}`);
+      if (res.status === 400) throw new ActionError("bad_params", `OpenAI API rejected the request: ${msg}`);
+      if (res.status === 403) throw new ActionError("blocked", `OpenAI API forbids this: ${msg}`);
+      throw new ActionError("platform_error", `OpenAI API error: ${msg}`);
+    }
+    const b64 = body?.data?.[0]?.b64_json;
+    if (!b64) throw new ActionError("platform_error", "OpenAI API returned no image data (data[0].b64_json missing).");
+    return Buffer.from(b64, "base64");
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new ActionError("ambiguous", `OpenAI image request exceeded ${API_TIMEOUT_MS / 60000} min — it MAY have been billed; check the usage dashboard before re-running.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** PNG dimensions straight from the IHDR chunk — no image library needed. */
+function pngSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 24) return null;
+  if (buf.readUInt32BE(0) !== 0x89504e47) return null; // \x89PNG
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+/**
+ * ~300px dashboard thumbnail via System.Drawing (this agent runs on Windows; on anything
+ * else we just skip it). Best-effort — a missing thumbnail never fails a real render.
+ */
+function makeThumbnailDataUrl(pngPath: string): string | null {
+  if (process.platform !== "win32") return null;
+  const script = [
+    "$ErrorActionPreference = 'Stop';",
+    "Add-Type -AssemblyName System.Drawing;",
+    `$img = [System.Drawing.Image]::FromFile('${pngPath.replace(/'/g, "''")}');`,
+    "$w = 300; $h = [int]($img.Height * $w / $img.Width);",
+    "$b = New-Object System.Drawing.Bitmap($w, $h);",
+    "$g = [System.Drawing.Graphics]::FromImage($b);",
+    "$g.InterpolationMode = 'HighQualityBicubic';",
+    "$g.DrawImage($img, 0, 0, $w, $h);",
+    "$ms = New-Object System.IO.MemoryStream;",
+    "$enc = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' };",
+    "$ep = New-Object System.Drawing.Imaging.EncoderParameters(1);",
+    "$ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 72L);",
+    "$b.Save($ms, $enc, $ep);",
+    "[Convert]::ToBase64String($ms.ToArray())",
+  ].join(" ");
+  try {
+    const b64 = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      encoding: "utf-8", timeout: 30_000, stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    return b64 ? `data:image/jpeg;base64,${b64}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The API path, start to finish: call gpt-image-2 at the exact ad size (nothing to crop),
+ * save + manifest + OneDrive export exactly like the browser path, so downstream rollups
+ * cannot tell the difference.
+ */
+async function generateViaOpenAiApi(args: {
+  key: string; action: Action; prompt: string; promptSubmitted: string; promptSuffix: string;
+  ratioKey: string; title: string; slug: string; brandId: string; stagedRefs: StagedRef[]; dryRun: boolean;
+}): Promise<ActionResult> {
+  const { key, action, prompt, promptSubmitted, promptSuffix, ratioKey, title, slug, brandId, stagedRefs, dryRun } = args;
+  const model = openAiImageModel();
+  const apiSize = RATIOS[ratioKey].apiSize;
+  const [wantW, wantH] = apiSize.split("x").map(Number);
+
+  if (dryRun) {
+    return {
+      ok: true,
+      result: {
+        dryRun: true, generator: model, requestedRatio: ratioKey, apiSize,
+        referencesStaged: stagedRefs.map((r) => r.source),
+        note: "dry run — API key resolved, request built, nothing sent (and nothing billed)",
+      },
+    };
+  }
+
+  const png = await callImagesApi(key, model, promptSubmitted, apiSize, stagedRefs);
+  const dims = pngSize(png) ?? { width: wantW, height: wantH };
+
+  const dir = uniqueDir(path.join("data", "media", brandId, `${dateStamp()}_${slug}`));
+  fs.mkdirSync(dir, { recursive: true });
+  const adName = `ad-${ratioKey.replace(":", "x")}.png`;
+  const adPath = path.join(dir, adName);
+  fs.writeFileSync(adPath, png);
+  const files = [{
+    path: path.resolve(adPath), role: "ad", width: dims.width, height: dims.height, ratio: ratioKey,
+    bytes: png.length, sha256: crypto.createHash("sha256").update(png).digest("hex"),
+  }];
+
+  const referenceRecord = stagedRefs.map((r) => ({ source: r.source, note: r.note, bytes: r.bytes, sha256: r.sha256 }));
+  const manifest = {
+    version: 1,
+    assetKind: "static-ad",
+    brandId, actionId: action.actionId, title, slug,
+    generator: model,
+    prompt, promptSuffix, promptSubmitted,
+    referenceImages: referenceRecord,
+    aspect: {
+      requested: ratioKey,
+      native: `${dims.width}x${dims.height}`,
+      cropped: false, // the API rendered the exact ratio — nothing was cut
+      cropBox: { x: 0, y: 0, w: dims.width, h: dims.height },
+    },
+    context: (action.params || {}).context ?? null,
+    conversationUrl: null,
+    files,
+    generatedAt: new Date().toISOString(),
+  };
+  const manifestPath = path.join(dir, "manifest.json");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+  const exportPath = exportToDesktopAds(brandId, slug, adPath);
+
+  return {
+    ok: true,
+    result: {
+      exportPath,
+      generator: model, slug,
+      requestedRatio: ratioKey,
+      nativeRatio: `${dims.width}x${dims.height}`,
+      cropped: false,
+      files,
+      referenceImages: referenceRecord,
+      savedDir: path.resolve(dir),
+      manifestPath: path.resolve(manifestPath),
+      conversationUrl: null,
+      promptSubmitted,
+      thumbnailDataUrl: makeThumbnailDataUrl(path.resolve(adPath)),
+      verified: true,
+    },
+  };
+}
 
 type ReferenceParam = { url?: string; path?: string; note?: string };
 type StagedRef = { filePath: string; source: string; note: string | null; bytes: number; sha256: string; cleanup: () => void };
@@ -70,6 +281,20 @@ export async function runGenerateMedia(action: Action, config: MarketerConfig): 
     // second as bad_params, not five browser-seconds in.
     for (const ref of normalizeReferences(p.referenceImages)) {
       stagedRefs.push(await stageReference(ref));
+    }
+
+    // API first (Andy, 2026-08-09): a resolved OPENAI_API_KEY means no browser at all —
+    // gpt-image-2 renders the exact ratio directly. Delete the key from .env to go back
+    // to the ChatGPT web path.
+    const apiKey = resolveOpenAIKey();
+    if (apiKey) {
+      const apiSuffix = stagedRefs.length
+        ? `\n\nUse the ${stagedRefs.length} attached image(s) as references as instructed above.`
+        : "";
+      return await generateViaOpenAiApi({
+        key: apiKey, action, prompt, promptSubmitted: prompt + apiSuffix, promptSuffix: apiSuffix,
+        ratioKey, title, slug, brandId, stagedRefs, dryRun: p.dryRun === true,
+      });
     }
 
     // The deterministic tail: Claude owns the creative prompt; the executor owns "actually
