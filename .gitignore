@@ -6,3 +6,6 @@ backend.local.json
 googleads.local.json
 .env
 .DS_Store
+
+# Local deliverables / player data — never commit
+*.xlsx
