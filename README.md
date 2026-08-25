@@ -1,71 +1,88 @@
 # andy2_marketer
 
-Social-media marketing agent — the "hands" of the system described in [MASTERPLAN.md](MASTERPLAN.md). Polls `a1a2-command-center` for approved actions and executes them in Andy's real logged-in Chrome (TikTok, Instagram, Twitter/X, Facebook, YouTube). Sibling of `andy2_crawler`: same CDP-attach + stealth + humanize browser core, cross-platform (Mac + Windows).
+The **hands** of a marketing system whose brain is Claude. Claude decides what to say and to
+whom; a backend decides whether it may go out, when, and records what happened; this repo
+executes one approved action at a time — in Andy's real logged-in Chrome, or straight against
+the Google Ads API — and reports evidence. The agent itself decides nothing.
 
-## Setup
+## How it works today
 
-```bash
-npm install                 # uses your installed Google Chrome — no playwright browser download
-npm run login               # opens the automation profile in real Chrome; sign in to the 5 platforms once
-npm run smoke               # proves Chrome control works: opens x.com, prints title + login state
+```
+  Andy ──▶ ┌──────────────────────────────────────────────────────────────┐
+  intent   │ CLAUDE — the brain                                           │
+     ▲     │ chat · Claude Code · scheduled session                       │
+     │     │ skills: /ad-ideas   /ad-read   /content-ideas                │
+     │     └────────────────────────┬─────────────────────────────────────┘
+     │                              │ marketer_* MCP tools
+     │                              ▼
+     │     ┌──────────────────────────────────────────────────────────────┐      ┌───────────┐
+     │     │ a1a2-command-center · apps/marketer — the RAILS  Render+Mongo│      │ dashboard │
+     │     │  1 lint  →  2 approve  →  3 rate-govern  →  claim            │◀────▶│    the    │
+     │     │  brands · campaigns · posts · links · inbox · media_assets   │      │  cockpit  │
+     │     └────────┬─────────────────────────────────────────▲───────────┘      └───────────┘
+     │              │ 30s poll: one action + approvedAt       │ 4 verify-after-act:
+     │              ▼                                         │    evidence, or needs_review
+     │     ┌────────┬─────────────────────────────────────────┴───────────┐
+     │     │ andy2_marketer — the HANDS (this repo, on Andy's PC)         │
+     │     │ Playwright ──CDP──▶ real logged-in Chrome · Google Ads REST  │
+     │     │ identity guard · dryRun on any act · no LLM key, no judgment │
+     │     └──────┬───────────────────┬───────────────────┬───────────────┘
+     │            ▼                   ▼                   ▼
+     │      X  IG  TikTok       gpt-image-2         Google Ads REST
+     │      YouTube  Facebook   static ads          built + selftested,
+     │      act + read          → data/media/       no live account yet
+     │            │
+     └────────────┴── metrics · clicks · conversions · inbox ──▶ the loop closes
 ```
 
-Backend key (any one of):
-- `MARKETER_INGEST_KEY` env var
-- `backend.local.json` in the repo root: `{ "ingestKey": "..." }`  (gitignored)
-- `backend.ingestKey` in `marketer.config.json`
+| | |
+|---|---|
+| **Reads** — run automatically | `check_session` · `scrape` · `search` · `ads_report` |
+| **Acts** — refused without a server-side `approvedAt` stamp | `post` · `reply` / `comment` · `like` · `follow` · `dm` · `ads_mutate` |
+| **Produces** | `generate_media` — gpt-image-2 static ads (chatgpt.com as fallback) → `data/media/<brand>/` + manifest + a browse copy on the Desktop |
+| **Coverage** | like / follow / comment / search / structured scrape on all five platforms; DMs on X, IG, TikTok, FB. **X is the only one that can originate a post** — nothing else has an asset pipeline yet |
+| **Rails** | lint → approve → rate-govern → verify-after-act, plus an in-agent identity guard so a brand can never act from the wrong account. Every act type takes `dryRun: true` |
 
-The key must match `MARKETER_INGEST_KEY` / `API_SHARED_SECRET` on the command center.
+## Planned, or implied by what's already here
 
-## Run
+```
+  hands ╌╌┬╌╌▶ asset pipeline (R2 / watched folder, video, caption fan-out per platform)
+          │      → posting beyond X, and YouTube upload as an executor:"api" action
+          ├╌╌▶ a second Chrome profile = a second identity — the guard already assumes it
+          ├╌╌▶ new adapters: LinkedIn / Threads / Reddit — one file + one registry line
+          └╌╌▶ owned channels (email / newsletter) — deliberately no surface today
 
-```bash
-npm run agent               # always-on daemon: polls every 30s, claims approved actions, executes
+  brain ╌╌┬╌╌▶ influencer CRM: discover → qualify → enrich → outreach → track
+          │      docs/INFLUENCERS.md is the hand-run v0 of exactly that pipeline
+          ├╌╌▶ Meta ads onto these rails — today they run from chat through the Meta Ads
+          │      MCP, outside the lint/approve/govern chain that Google Ads rides
+          └╌╌▶ scheduled Claude sessions as a standing brain — the queue is brain-agnostic
 ```
 
-Point at a non-production backend with `MARKETER_BACKEND_BASEURL=http://...`.
+Two things are built but unproven, and should be treated that way: **Google Ads has never
+touched a live account** (needs `googleads.local.json` plus a brand-declared `customerId`), and
+the **image bridge has never sent a real post**. [docs/STATUS.md](docs/STATUS.md) keeps that
+list honest — it is the file to trust over any other.
 
-## What it can do
-
-| Action | Params | Coverage |
-|---|---|---|
-| `check_session` | `{platforms?}` | all 5 platforms — login-health sweep |
-| `scrape` | `{what: page\|thread\|comments\|profile\|feed, targetUrl\|handle, limit?, includeReplies?}` | `page` on all 5; structured shapes on all 5 (`feed` is X-only; YT also takes `video`/`channel`) |
-| `search` | `{query, tab?, limit?}` | X (`latest\|top\|people`), TikTok (`top\|videos\|accounts`), YouTube (`videos\|channels`), FB (`posts\|people\|pages`), IG (no tabs — returns accounts + hashtags) |
-| `post` | `{text}` | X (text only — no asset pipeline yet) |
-| `reply` / `comment` | `{targetUrl, text}` | X, IG (post/reel URL), TikTok (video URL, ≤150 chars), YouTube (watch URL), FB (post/reel/video URL) — a comment on the target everywhere |
-| `like` | `{targetUrl, undo?}` | X, IG, TikTok, YouTube, FB |
-| `follow` | `{handle\|targetUrl, undo?}` | X, IG, TikTok, YouTube (= subscribe), FB (pages/profiles with a Follow button; friend requests are not automated) |
-| `dm` | `{handle, text}` | X (needs X Chat unlocked — see below), IG, TikTok + FB (only where a Message button exists). YouTube has no DMs |
-
-Every act type also takes `dryRun: true`: it drives the whole flow and stops just before sending. Use it to rehearse anything risky.
-
-*Posting* beyond X needs the asset pipeline from [MASTERPLAN.md](MASTERPLAN.md) §2.4 (YouTube uploads are planned via the official API; FB text posting waits on a solid composer-verification story).
-
-**X Chat passcode:** if X has locked Messages behind a device-managed passcode, `/messages` redirects to a PIN-recovery screen and `dm` fails with a `login_required` telling you so. Fix it once by hand — `npm run login`, open Messages, "Send temporary passcode", enter the code from your phone.
-
-## How it works
-
-- `src/agent/agent.ts` — poll loop: heartbeat + claim + execute + complete. Single-instance lockfile in `data/agent.lock`; log in `data/agent.log`; `data/agent-status.json` for the widget.
-- `src/browser/` — Chrome control: spawns real Chrome with `--remote-debugging-port=9223` (crawler uses 9222, so both agents coexist), attaches Playwright over CDP, strips automation args, injects stealth patches. Dedicated profile in `profiles/automation-profile` — never Andy's live Chrome profile.
-- `src/platforms.ts` — per-platform home URLs + login-state detectors.
-- `src/executors/` — one module per action type; each dispatches per platform. X's flows live inline (plus `xCommon.ts`, the shared X machinery); Instagram/TikTok/YouTube/Facebook live in one adapter file each (registered in `adapters.ts`), on top of `webCommon.ts` (shared session lifecycle, login gates, count parsing, failure taxonomy). A new platform = one adapter file + one registry line.
-
-Two rails guard every outward action:
-
-- **Approval stamp.** The backend ships `approvedAt` with each claimed action and the agent refuses any act type that arrives without one — so a bug or a prompt-injected tool call upstream still can't make it post.
-- **Verify-after-act.** Nothing reports success on a click. `post`/`reply` take the permalink out of X's success toast (or find the post on `/with_replies`), `like`/`follow` confirm the button flipped state, and anything ambiguous comes back as ambiguous — never retried, because a "failed" post may well have gone out.
-
-Failures carry a machine-readable `failureCode` (`login_required`, `rate_limited`, `ui_changed`, `not_found`, `bad_params`, `blocked`, `ambiguous`, `platform_error`) so the command center can route between retry and needs-review.
-
-## Working on adapters
+## Quickstart
 
 ```bash
-npx tsx scripts/probe.ts <url> [jsExpr | @file.js]   # open a page in the profile, run an expression, print JSON
-npx tsx scripts/explore.ts @steps.json               # drive a page through steps (goto/scroll/click/type/eval) — for lazy-loading UIs
-npx tsx scripts/runAction.ts '<action>' | @file.json # run actions through the real executors, no queue; act types only with dryRun:true
+npm install      # uses your installed Chrome — no playwright browser download
+npm run login    # sign in to the five platforms once, in the automation profile
+npm run smoke    # proves Chrome control works
+npm run agent    # the daemon: poll → claim → execute → report, every 30s
 ```
 
-Platform DOMs change; the probes are how you check a selector against the live page before codifying it. Run them only while the agent is idle — everything drives the same Chrome profile.
+Needs a backend key (`MARKETER_INGEST_KEY` env var, or `backend.local.json`) matching the
+command center. Point elsewhere with `MARKETER_BACKEND_BASEURL`.
 
-Only server-side **approved** actions are ever handed to this agent — the approval queue, autonomy policy, and kill switch live in `a1a2-command-center/apps/marketer`. Claude drives everything remotely through the `marketer_*` MCP tools at `/api/marketer/mcp`; the cockpit is [andy2_marketer_dashboard](../andy2_marketer_dashboard).
+## Where to read more
+
+| | |
+|---|---|
+| [docs/STATUS.md](docs/STATUS.md) | **What actually works**, verified against code, with the caveats |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Three processes, four rails, every collection |
+| [docs/AGENT.md](docs/AGENT.md) | Operator manual: each action's params, the probe harnesses, browser gotchas |
+| [docs/BRIEF.md](docs/BRIEF.md) | Plan of record for this build — locked decisions and phases |
+| [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/decisions/](docs/decisions/) | Schemas, and the ADRs behind the hard-to-reverse calls |
+| [MASTERPLAN.md](MASTERPLAN.md) | The vision, including the builds still out of scope |
