@@ -4,7 +4,7 @@ The full manual for running and extending the PC agent: setup, every action type
 platform coverage, the probe harnesses, and the browser gotchas. [README.md](../README.md) is
 the short version.
 
-Social-media marketing agent — the "hands" of the system described in [MASTERPLAN.md](../MASTERPLAN.md). Polls `a1a2-command-center` for approved actions and executes them in Andy's real logged-in Chrome (TikTok, Instagram, Twitter/X, Facebook, YouTube). Sibling of `andy2_crawler`: same CDP-attach + stealth + humanize browser core, cross-platform (Mac + Windows).
+Social-media marketing agent — the "hands" of the system described in the README. Polls `a1a2-command-center` for approved actions and executes them in Andy's real logged-in Chrome (TikTok, Instagram, Twitter/X, Facebook, YouTube). Sibling of `andy2_crawler`: same CDP-attach + stealth + humanize browser core, cross-platform (Mac + Windows).
 
 ## Setup
 
@@ -44,7 +44,7 @@ Point at a non-production backend with `MARKETER_BACKEND_BASEURL=http://...`.
 
 Every act type also takes `dryRun: true`: it drives the whole flow and stops just before sending. Use it to rehearse anything risky.
 
-*Posting* beyond X needs the asset pipeline from [MASTERPLAN.md](../MASTERPLAN.md) §2.4 (YouTube uploads are planned via the official API; FB text posting waits on a solid composer-verification story).
+*Posting* beyond X needs the planned asset pipeline (YouTube uploads are planned via the official API; FB text posting waits on a solid composer-verification story).
 
 **X Chat passcode:** if X has locked Messages behind a device-managed passcode, `/messages` redirects to a PIN-recovery screen and `dm` fails with a `login_required` telling you so. Fix it once by hand — `npm run login`, open Messages, "Send temporary passcode", enter the code from your phone.
 
