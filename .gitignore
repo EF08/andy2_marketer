@@ -1,11 +1,35 @@
+# ─── Build / deps ────────────────────────────────────────────────
 node_modules/
 dist/
+
+# ─── Runtime state — real accounts, real scraped data ────────────
 data/
 profiles/
+
+# ─── Secrets & machine-local config ──────────────────────────────
+.env
+*.local.json
 backend.local.json
 googleads.local.json
-.env
-.DS_Store
 
-# Local deliverables / player data — never commit
+# ─── Private business layer — NEVER commit ───────────────────────
+# The strategy, the playbooks and the prompt IP live on disk only.
+# See "What isn't in this repo" in README.md.
+MASTERPLAN.md
+docs/BRIEF.md
+docs/INFLUENCERS.md
+docs/STATUS.md
+skills-lock.json
+.claude/
+.agents/
+
+# Catch-all: anywhere to put new private material without thinking.
+private/
+*.private.md
+*.private.json
+
+# ─── Local deliverables / player data ────────────────────────────
 *.xlsx
+*.csv
+
+.DS_Store

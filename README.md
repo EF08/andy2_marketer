@@ -75,6 +75,33 @@ and provide its ingest key via the `MARKETER_INGEST_KEY` env var or a gitignored
 Media generation needs `OPENAI_API_KEY` in a gitignored `.env`; without it, image renders
 fall back to chatgpt.com browser automation.
 
+## What isn't in this repo
+
+This is one repo, worked on directly — there is no private fork and no sanitising build step.
+The split is by **file**, not by repository: the code is public, the business layer never
+leaves the machine it runs on.
+
+| Stays local (gitignored) | Why |
+|---|---|
+| `MASTERPLAN.md`, `docs/BRIEF.md`, `docs/STATUS.md` | Strategy, roadmap and where the build actually stands |
+| `docs/INFLUENCERS.md` | Named outreach targets — other people's information, not mine to publish |
+| `.claude/`, `.agents/`, `skills-lock.json` | The prompt IP: the skills that decide what an ad *says*. The hands are open source; the judgment is not |
+| `.env`, `*.local.json` | API keys, OAuth credentials, backend ingest key |
+| `data/`, `profiles/` | Real scraped material and a logged-in Chrome profile — live session cookies |
+| `*.xlsx`, `*.csv` | Local deliverables containing customer data |
+
+Two things enforce that, so it can't rot into a convention nobody follows:
+
+- **`.gitignore`** lists each path above, plus `private/` and `*.private.md` as a home for
+  anything new — so a future strategy doc is invisible to git by default rather than by memory.
+- **`.githooks/pre-commit`** refuses any commit that stages one of those paths *even with
+  `git add -f`*, and rejects staged diffs containing secret-shaped strings. Enable it after
+  cloning with `git config core.hooksPath .githooks`.
+
+The practical consequence: clone this and you get a complete, runnable agent. What you don't
+get is my roadmap, my contact list, or the prompts that make it write good copy — and nothing
+in the history has ever contained them.
+
 ## Where to read more
 
 | | |
