@@ -75,17 +75,17 @@ and provide its ingest key via the `MARKETER_INGEST_KEY` env var or a gitignored
 Media generation needs `OPENAI_API_KEY` in a gitignored `.env`; without it, image renders
 fall back to chatgpt.com browser automation.
 
-## What isn't in this repo
+## What isn't in this repo — and how to generate your own
 
 This is one repo, worked on directly — there is no private fork and no sanitising build step.
-The split is by **file**, not by repository: the code is public, the business layer never
-leaves the machine it runs on.
+The split is by **file**, not by repository: the code is public, the business layer never leaves
+the machine it runs on.
 
 | Stays local (gitignored) | Why |
 |---|---|
 | `MASTERPLAN.md`, `docs/BRIEF.md`, `docs/STATUS.md` | Strategy, roadmap and where the build actually stands |
 | `docs/INFLUENCERS.md` | Named outreach targets — other people's information, not mine to publish |
-| `.claude/`, `.agents/`, `skills-lock.json` | The prompt IP: the skills that decide what an ad *says*. The hands are open source; the judgment is not |
+| `.claude/`, `.agents/`, `skills-lock.json` | The prompt IP: the skills that decide what an ad *says* |
 | `.env`, `*.local.json` | API keys, OAuth credentials, backend ingest key |
 | `data/`, `profiles/` | Real scraped material and a logged-in Chrome profile — live session cookies |
 | `*.xlsx`, `*.csv` | Local deliverables containing customer data |
@@ -96,11 +96,44 @@ Two things enforce that, so it can't rot into a convention nobody follows:
   anything new — so a future strategy doc is invisible to git by default rather than by memory.
 - **`.githooks/pre-commit`** refuses any commit that stages one of those paths *even with
   `git add -f`*, and rejects staged diffs containing secret-shaped strings. Enable it after
-  cloning with `git config core.hooksPath .githooks`.
+  cloning: `git config core.hooksPath .githooks`.
 
-The practical consequence: clone this and you get a complete, runnable agent. What you don't
-get is my roadmap, my contact list, or the prompts that make it write good copy — and nothing
-in the history has ever contained them.
+### Generate your own
+
+Those files aren't a missing dependency — they're **output**. This repo ships the hands; the
+judgment is something you produce once, for your own brand, by letting Claude interview you.
+Clone the repo, open Claude Code in it, and paste:
+
+```text
+Read README.md and docs/CONTRACTS.md so you know what a brand profile requires.
+
+Then interview me — one question at a time, and don't assume answers — until you can fill in:
+  - what I sell, to whom, and the single outcome someone actually buys it for
+  - my voice: tone, words I would never use, whether humour is allowed
+  - claims I must never make (legal, regulatory, or simply untrue)
+  - competitors or topics never to mention
+  - which platforms I'm genuinely active on, and my handle on each
+  - what winning looks like in 90 days, and the one metric that proves it
+  - what I've already tried that failed, and why I think it failed
+
+Push back on vague answers. "Everyone" is not an audience.
+
+Then write:
+  1. docs/BRIEF.md            - positioning, the three angles worth testing,
+                                what I'm deliberately NOT doing, and the 90-day plan
+  2. private/brand.json       - a brand profile matching the schema in docs/CONTRACTS.md
+                                (voice, audience, goals, bannedClaims, doNotMention,
+                                channels, activeHours), ready for marketer_brand_set
+  3. .claude/skills/content-ideas/SKILL.md
+                              - a skill that generates post ideas in my voice,
+                                grounded in the brief above
+
+Confirm all three paths are gitignored before you write to them.
+```
+
+Every one of those paths is ignored by the rules above, so what you generate stays on your
+machine. That is the point: two people can run byte-identical code and get completely different
+results, because the code was never the advantage — the brief is.
 
 ## Where to read more
 
