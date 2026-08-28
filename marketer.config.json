@@ -11,6 +11,6 @@
     "waitMaxMs": 5000
   },
   "backend": {
-    "baseUrl": "https://a1a2-command-center.onrender.com"
+    "mode": "remote"
   }
 }

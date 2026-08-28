@@ -10,6 +10,7 @@ import { runDm } from "./dm";
 import { runGenerateMedia } from "./generateMedia";
 import { runAdsReport, runAdsMutate } from "./googleAds";
 import { setActionContext } from "./identity";
+import { ACT_TYPES } from "../actTypes";
 
 export type Action = {
   actionId: string;
@@ -38,7 +39,8 @@ export type ActionResult = {
 /** Outward-facing types. These mutate the world, so they carry the extra guardrails.
  *  ads_mutate belongs here: it spends money through an API instead of posting through
  *  a browser, but "never runs without a server-side approval stamp" applies the same. */
-export const ACT_TYPES = ["post", "reply", "comment", "like", "follow", "dm", "ads_mutate"];
+// Defined in ../actTypes so the local CLI can import it without loading Playwright.
+export { ACT_TYPES };
 
 /**
  * Dispatch an action to its executor.

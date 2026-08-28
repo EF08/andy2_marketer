@@ -1,11 +1,12 @@
 {
   "name": "andy2_marketer",
   "version": "0.1.0",
-  "description": "Social-media marketing agent — drives Andy's real logged-in Chrome (TikTok/IG/X/FB/YouTube) from the a1a2-command-center action queue.",
+  "description": "Social-media marketing agent — executes approved actions in a real logged-in Chrome (X/Instagram/TikTok/Facebook/YouTube), driven by a remote backend queue or a local JSON file.",
   "main": "dist/agent/agent.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "agent": "tsx src/agent/agent.ts",
+    "local": "tsx scripts/local.ts",
     "smoke": "tsx scripts/smoke.ts",
     "login": "tsx scripts/login.ts"
   },

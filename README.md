@@ -68,12 +68,43 @@ npm run smoke    # proves Chrome control works
 npm run agent    # the daemon: poll → claim → execute → report, every 30s
 ```
 
-Point `backend.baseUrl` in `marketer.config.json` at a backend implementing the rails above,
-and provide its ingest key via the `MARKETER_INGEST_KEY` env var or a gitignored
-`backend.local.json`. Google Ads needs OAuth credentials in a gitignored
-`googleads.local.json` (see `scripts/googleads-auth.ts`) plus a brand-declared `customerId`.
-Media generation needs `OPENAI_API_KEY` in a gitignored `.env`; without it, image renders
-fall back to chatgpt.com browser automation.
+The agent's entire dependency on "the backend" is two calls — claim an approved action, report
+what happened — so it runs against either of two queues. **No host is hardcoded anywhere in this
+repo**; a real URL is deployment config, not source.
+
+### Local mode — no server, no database
+
+```bash
+export MARKETER_MODE=local      # or "backend": { "mode": "local" } in marketer.config.json
+npm run agent                   # in one terminal
+npm run local -- draft check_session          # in another
+npm run local -- draft like --platform twitter --params '{"url":"https://x.com/…/status/1"}'
+npm run local -- list
+npm run local -- approve <id>
+```
+
+The whole queue is one JSON file at `data/local/queue.json`, and `npm run local` is the
+dashboard. That is the entire database: a handful of rows on one machine, where anything
+heavier would be ceremony without a payoff. Outgrowing it is the signal to run the real backend.
+
+**The rails do not relax.** An outward action still refuses to run without an `approvedAt`
+stamp — the only difference is that *you* stamp it with `approve` instead of a server doing it.
+Reads run unattended. The identity guard still applies: put your handle in `private/brand.json`
+(`{"slug": "…", "channels": {"twitter": {"handle": "…"}}}`) and every outward act checks it
+before touching anything.
+
+### Remote mode — the full system
+
+Set `MARKETER_BACKEND_BASEURL` and `MARKETER_INGEST_KEY`, or put `baseUrl` and `ingestKey` in a
+gitignored `backend.local.json`, pointing at a backend that implements the two agent endpoints
+in [docs/AGENT.md](docs/AGENT.md). That is what buys you the MCP tools, the approval dashboard,
+multi-brand isolation and the rate governor. Misconfigure it and the agent says so at startup
+rather than polling nothing forever.
+
+Either mode: Google Ads needs OAuth credentials in a gitignored `googleads.local.json` (see
+`scripts/googleads-auth.ts`) plus a brand-declared `customerId`. Media generation needs
+`OPENAI_API_KEY` in a gitignored `.env`; without it, image renders fall back to chatgpt.com
+browser automation.
 
 ## What isn't in this repo — and how to generate your own
 

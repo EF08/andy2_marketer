@@ -1,21 +1,24 @@
 /**
- * Always-on marketer agent (cross-platform: Mac now, Windows PC later).
+ * Always-on marketer agent (cross-platform: macOS and Windows).
  *
- * Lets the backend — and therefore Claude, from any device via the Marketer MCP
- * connector — run social-media actions in Andy's real logged-in Chrome:
+ * Runs social-media actions in a real logged-in Chrome, one at a time:
  *
- *   every 30s   → POST /api/marketer/agent/poll   (heartbeat + claim an approved action)
- *   claimed     → execute via the matching executor (check_session, scrape; act types in Phase 2)
- *   done/failed → POST /api/marketer/agent/actions/:id/complete { ok, result, error }
+ *   every 30s   → poll     (heartbeat + claim an approved action)
+ *   claimed     → execute via the matching executor
+ *   done/failed → complete { ok, result, error }
  *
- * Only server-side APPROVED actions are ever handed out (the approval queue lives in the
- * backend), and executors re-validate everything they touch (host whitelists, param clamps).
- * Session-check results ride every heartbeat so the dashboard always shows login health.
+ * Those two calls are the agent's entire dependency on "the queue", and they are served by
+ * either transport (see ../backend): a remote HTTP backend, or a local JSON file with no
+ * server at all. The agent cannot tell the difference, and the rails are the same in both —
+ * only APPROVED actions are ever handed out, and executors re-validate everything they touch
+ * (host whitelists, param clamps). Session-check results ride every heartbeat, so login
+ * health is always visible.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, resolveIngestKey } from "../config/loader";
+import { loadConfig } from "../config/loader";
+import { createTransport, Transport } from "../backend";
 import { executeAction, Action } from "../executors";
 import type { SessionCheckResult } from "../executors/checkSession";
 
@@ -59,21 +62,10 @@ function acquireLock(): boolean {
   }
 }
 
-/* ── backend connection ── */
+/* ── the queue: a remote backend, or a local JSON file ── */
 const config = loadConfig(path.join(ROOT, "marketer.config.json"));
-const BASE_URL = process.env.MARKETER_BACKEND_BASEURL || config.backend.baseUrl;
-const KEY = resolveIngestKey(ROOT, config);
 const HOSTNAME = os.hostname();
-
-async function api(pathname: string, body: unknown): Promise<any> {
-  const res = await fetch(new URL(pathname, BASE_URL).toString(), {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-marketer-key": KEY as string },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} on ${pathname}`);
-  return res.json();
-}
+let transport: Transport;
 
 /* ── agent state ── */
 let currentAction: Action | null = null;
@@ -111,7 +103,7 @@ async function runAction(action: Action): Promise<void> {
   }
 
   try {
-    await api(`/api/marketer/agent/actions/${action.actionId}/complete`, { ok, result, error: error ?? null });
+    await transport.complete(action.actionId, { ok, result, error: error ?? null });
     log(`Action ${action.actionId} ${ok ? "done" : `FAILED: ${error}`}`);
   } catch (e) {
     log(`Could not report completion for ${action.actionId}: ${(e as Error).message}`);
@@ -122,7 +114,7 @@ async function runAction(action: Action): Promise<void> {
 
 async function tick(): Promise<void> {
   try {
-    const resp = await api("/api/marketer/agent/poll", {
+    const resp = await transport.poll({
       status: currentAction ? "working" : "idle",
       hostname: HOSTNAME,
       platform: process.platform,
@@ -137,7 +129,7 @@ async function tick(): Promise<void> {
     }
   } catch (e) {
     failStreak++;
-    // Render free tier cold-starts — log the first few failures, then only every 20th
+    // A sleeping host cold-starts — log the first few failures, then only every 20th
     if (failStreak <= 3 || failStreak % 20 === 0) {
       log(`Poll failed (streak ${failStreak}): ${(e as Error).message}`);
     }
@@ -147,11 +139,13 @@ async function tick(): Promise<void> {
 
 async function main(): Promise<void> {
   if (!acquireLock()) return;
-  if (!KEY) {
-    log("No ingest key — set MARKETER_INGEST_KEY, backend.local.json {ingestKey}, or backend.ingestKey in marketer.config.json.");
+  try {
+    transport = createTransport(ROOT, config);
+  } catch (e) {
+    log((e as Error).message);
     return;
   }
-  log(`Marketer agent started (pid=${process.pid}, host=${HOSTNAME}, os=${process.platform}, backend=${BASE_URL})`);
+  log(`Marketer agent started (pid=${process.pid}, host=${HOSTNAME}, os=${process.platform}, queue=${transport.describe})`);
   writeLocalStatus();
   for (;;) {
     await tick();

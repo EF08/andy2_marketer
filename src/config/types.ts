@@ -15,14 +15,27 @@ export type Behavior = {
   waitMaxMs: number;
 };
 
+/**
+ * Where the action queue lives.
+ *
+ *  "remote" — an HTTP backend implementing the two agent endpoints (the full system:
+ *             MCP tools, dashboard, multi-brand, rate governor).
+ *  "local"  — a JSON file under data/local/. No server, no database, no network.
+ *             You draft and approve with `npm run local`. Same rails, one machine.
+ *
+ * Never hardcode a real host here: set MARKETER_BACKEND_BASEURL, or put
+ * `{ "baseUrl": "..." }` in the gitignored backend.local.json.
+ */
 export type BackendConfig = {
-  baseUrl: string;
+  mode?: "remote" | "local";
+  /** Required in remote mode. Resolved from env → backend.local.json → this file. */
+  baseUrl?: string;
   /** Shared secret sent as x-marketer-key. Prefer MARKETER_INGEST_KEY env or backend.local.json. */
   ingestKey?: string;
 };
 
 export type MarketerConfig = {
-  /** Dedicated automation profile dir (never Andy's live Chrome profile). */
+  /** Dedicated automation profile dir (never your live Chrome profile). */
   profileDir: string;
   chrome: ChromeConfig;
   behavior: Behavior;

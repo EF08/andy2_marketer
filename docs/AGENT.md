@@ -4,7 +4,7 @@ The full manual for running and extending the PC agent: setup, every action type
 platform coverage, the probe harnesses, and the browser gotchas. [README.md](../README.md) is
 the short version.
 
-Social-media marketing agent — the "hands" of the system described in the README. Polls `a1a2-command-center` for approved actions and executes them in Andy's real logged-in Chrome (TikTok, Instagram, Twitter/X, Facebook, YouTube). Sibling of `andy2_crawler`: same CDP-attach + stealth + humanize browser core, cross-platform (Mac + Windows).
+Social-media marketing agent — the "hands" of the system described in the README. Claims approved actions from a queue and executes them in a real logged-in Chrome (TikTok, Instagram, Twitter/X, Facebook, YouTube). The queue is either a remote HTTP backend or, with `MARKETER_MODE=local`, a JSON file on this machine — the agent cannot tell which, and the approval rail holds either way (see the README Quickstart). Sibling of `andy2_crawler`: same CDP-attach + stealth + humanize browser core, cross-platform (Mac + Windows).
 
 ## Setup
 
